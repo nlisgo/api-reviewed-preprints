@@ -1,0 +1,32 @@
+version: '3.4'
+services:
+  yarn:
+    build:
+      context: .
+      target: dev
+    command: yarn
+    volumes:
+      - ./:/app/
+      - node_modules:/app/node_modules
+
+  app:
+    build:
+      context: .
+      target: dev
+    depends_on:
+      yarn:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "sh -c 'apk add curl; curl http://app:3000/'"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 2s
+    ports:
+      - 3000:3000
+    volumes:
+      - ./:/app/
+      - node_modules:/app/node_modules
+
+volumes:
+  node_modules:
