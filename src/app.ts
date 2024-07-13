@@ -110,4 +110,8 @@ app.get('/', async (req, res) => {
   });
 });
 
+app.get('/:id', async (req, res) => {
+  errorNotFoundRequest(res);
+});
+
 export default app;
