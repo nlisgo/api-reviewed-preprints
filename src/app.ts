@@ -34,15 +34,16 @@ type ReviewedPreprintListResponse = {
 };
 
 export const writeResponse = (res: Response, contentType: string, statusCode: 200 | 400 | 404, message: BadRequestMessage | ReviewedPreprintListResponse | ReviewedPreprintItemResponse) : void => {
-  res
-    .status(statusCode)
-    .set({
-      'Content-Type': contentType,
-      'Cache-Control': statusCode === 200 ? 'max-age=300, public, stale-if-error=86400, stale-while-revalidate=300' : 'must-revalidate, no-cache, private',
-      Vary: ['Accept', 'Authorization'],
-    })
-    .json(message)
-    .end();
+  if (!res.headersSent) {
+    res
+      .status(statusCode)
+      .set({
+        'Content-Type': contentType,
+        'Cache-Control': statusCode === 200 ? 'max-age=300, public, stale-if-error=86400, stale-while-revalidate=300' : 'must-revalidate, no-cache, private',
+        Vary: ['Accept', 'Authorization'],
+      })
+      .json(message);
+  }
 };
 
 const errorBadRequest = (res: Response, message: string) : void => {
@@ -103,12 +104,10 @@ app.get('/', async (req, res) => {
     errorBadRequest(res, 'expecting YYYY-MM-DD format for \'end-date\' parameter');
   }
 
-  if (!res.hasHeader('Content-Type')) {
-    writeResponse(res, 'application/vnd.elife.reviewed-preprint-list+json; version=1', 200, {
-      total: 0,
-      items: [],
-    });
-  }
+  writeResponse(res, 'application/vnd.elife.reviewed-preprint-list+json; version=1', 200, {
+    total: 0,
+    items: [],
+  });
 });
 
 export default app;
