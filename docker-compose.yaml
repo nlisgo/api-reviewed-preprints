@@ -28,5 +28,23 @@ services:
       - ./:/app/
       - node_modules:/app/node_modules
 
+  wiremock:
+    image: wiremock/wiremock:3.8.0-1
+    ports:
+      - 3001:3000
+    healthcheck:
+      test: curl http://wiremock:3000/__admin/health
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    command:
+      - --local-response-templating
+      - --port
+      - "3000"
+    volumes:
+      - ./wiremock/mappings:/home/wiremock/mappings
+      - ./wiremock/files:/home/wiremock/__files
+
 volumes:
   node_modules:
