@@ -1,5 +1,57 @@
 import express, { Response, Request } from 'express';
 import moment from 'moment';
+import { Content } from './types/content';
+import { Author } from './types/author';
+import { contentToHtml } from './utils/content-to-html';
+
+type ProcessedArticle = {
+  title: Content,
+  authors?: Author[],
+  licenses: {
+    type: string,
+    url?: string,
+    content?: Content,
+  }[],
+  headings: {
+    id: string,
+    text: Content,
+  }[],
+  references: {
+    title: string,
+  }[],
+};
+
+type EnhancedArticleNoContent = EnhancedArticle & {
+  article: ProcessedArticle,
+  firstPublished: Date,
+};
+
+type RelatedContent = {
+  type: string,
+  title: string,
+  url: string,
+  content?: string,
+  imageUrl?: string,
+};
+
+type EnhancedArticle = {
+  id: string,
+  msid: string,
+  doi: string,
+  versionIdentifier: string,
+  versionDoi?: string,
+  preprintDoi: string,
+  preprintUrl: string,
+  preprintPosted: Date,
+  sentForReview?: Date,
+  published: Date | null,
+  publishedYear?: number,
+  volume?: string,
+  eLocationId?: string,
+  subjects?: string[],
+  pdfUrl?: string,
+  relatedContent?: RelatedContent[],
+};
 
 type BadRequestMessage = {
   title: 'bad request' | 'not found',
@@ -63,6 +115,130 @@ type Param = string | Number | Array<string | Number> | null;
 
 const queryParam = (req: Request, key: string, defaultValue: Param = null) : Param => req.query[key] as string ?? defaultValue;
 
+const fetchVersionsNoContent = async (page: number, perPage: number, order: 'asc' | 'desc', useDate: 'default' | 'published', startDate: string, endDate: string) => {
+  const url = [
+    'http://wiremock:3000/api/preprints-no-content?',
+    [
+      `page=${page}`,
+      `per-page=${perPage}`,
+      `order=${order}`,
+      useDate === 'published' ? 'use-date=firstPublished' : '',
+      startDate ? `start-date=${startDate}` : '',
+      endDate ? `end-date=${new Date(new Date().setDate(new Date(endDate).getUTCDate() + 1)).toISOString().split('T')[0]}` : '',
+    ].filter((q) => q).join('&'),
+  ].join('');
+  return fetch(url)
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(`error fetching (${url}): ${response.statusText}`);
+      }
+
+      const items = await response.json() as EnhancedArticleNoContent[];
+
+      const total = response.headers.get('x-total-count')
+        ? parseInt(response.headers.get('x-total-count') as string, 10)
+        : Object.keys(items).length;
+
+      return {
+        total,
+        items,
+      };
+    });
+};
+
+const prepareAuthor = (author: Author) : string => {
+  const givenNames = (author.givenNames ?? []).join(' ');
+  const familyNames = (author.familyNames ?? []).join(' ');
+
+  return `${givenNames}${familyNames ? ' ' : ''}${familyNames}`;
+};
+
+const prepareAuthorLine = (authors: Author[]) : undefined | string => {
+  if (authors.length === 0) {
+    return;
+  }
+
+  const authorLine = [];
+
+  if (authors.length > 0) {
+    authorLine.push(prepareAuthor(authors[0]));
+  }
+
+  if (authors.length > 1) {
+    authorLine.push(prepareAuthor(authors[1]));
+  }
+
+  if (authors.length > 2) {
+    authorLine.push(prepareAuthor(authors[authors.length - 1]));
+  }
+
+  return [authorLine.slice(0, 2).join(', '), authorLine.length > 2 ? authorLine[2] : null].filter((a) => a !== null).join(authors.length > 3 ? ' ... ' : ', '); // eslint-disable-line consistent-return
+};
+
+type Subject = {
+  id: string,
+  name: string,
+};
+
+const msaNames: Record<string, string> = {
+  'Biochemistry and Chemical Biology': 'biochemistry-chemical-biology',
+  'Cancer Biology': 'cancer-biology',
+  'Cell Biology': 'cell-biology',
+  'Chromosomes and Gene Expression': 'chromosomes-gene-expression',
+  'Computational and Systems Biology': 'computational-systems-biology',
+  'Developmental Biology': 'developmental-biology',
+  Ecology: 'ecology',
+  'Epidemiology and Global Health': 'epidemiology-global-health',
+  'Evolutionary Biology': 'evolutionary-biology',
+  'Genetics and Genomics': 'genetics-genomics',
+  'Immunology and Inflammation': 'immunology-inflammation',
+  Medicine: 'medicine',
+  'Microbiology and Infectious Disease': 'microbiology-infectious-disease',
+  Neuroscience: 'neuroscience',
+  'Physics of Living Systems': 'physics-living-systems',
+  'Plant Biology': 'plant-biology',
+  'Stem Cells and Regenerative Medicine': 'stem-cells-regenerative-medicine',
+  'Structural Biology and Molecular Biophysics': 'structural-biology-molecular-biophysics',
+};
+
+const getSubjects = (subjectNames: string[]) : Subject[] => subjectNames.map((subjectName) => ({
+  id: msaNames[subjectName],
+  name: subjectName,
+}));
+
+const toIsoStringWithoutMilliseconds = (date: Date): string => {
+  const year = date.getUTCFullYear();
+  const month = (date.getUTCMonth() + 1).toString().padStart(2, '0');
+  const day = date.getUTCDate().toString().padStart(2, '0');
+  const hours = date.getUTCHours().toString().padStart(2, '0');
+  const minutes = date.getUTCMinutes().toString().padStart(2, '0');
+  const seconds = date.getUTCSeconds().toString().padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}Z`;
+};
+
+const enhancedArticleNoContentToSnippet = ({
+  msid,
+  preprintDoi,
+  pdfUrl,
+  article,
+  published,
+  subjects,
+  firstPublished,
+}: EnhancedArticleNoContent): ReviewedPreprintSnippet => ({
+  id: msid,
+  doi: preprintDoi,
+  pdf: pdfUrl,
+  status: 'reviewed',
+  authorLine: prepareAuthorLine(article.authors || []),
+  title: contentToHtml(article.title),
+  published: toIsoStringWithoutMilliseconds(new Date(firstPublished)),
+  reviewedDate: toIsoStringWithoutMilliseconds(new Date(firstPublished)),
+  versionDate: toIsoStringWithoutMilliseconds(new Date(published!)),
+  statusDate: toIsoStringWithoutMilliseconds(new Date(published!)),
+  stage: 'published',
+  subjects: getSubjects(subjects || []),
+});
+
 const app = express();
 
 app.get('/', async (req, res) => {
@@ -104,9 +280,13 @@ app.get('/', async (req, res) => {
     errorBadRequest(res, 'expecting YYYY-MM-DD format for \'end-date\' parameter');
   }
 
+  const results = await fetchVersionsNoContent(page, perPage, order as 'asc' | 'desc', useDate as 'default' | 'published', startDate, endDate);
+
+  const items = Array.from(results.items).map(enhancedArticleNoContentToSnippet);
+
   writeResponse(res, 'application/vnd.elife.reviewed-preprint-list+json; version=1', 200, {
-    total: 0,
-    items: [],
+    total: results.total,
+    items,
   });
 });
 
